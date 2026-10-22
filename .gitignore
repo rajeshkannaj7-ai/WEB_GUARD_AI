@@ -1,12 +1,23 @@
 node_modules/
 backend/node_modules/
 frontend/node_modules/
-backend/.env
-backend/.env*
-frontend/.env*
+
+# Environment files
 .env
 .env.*
 *.env
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# Allow example templates
+!.env.example
+!*.env.example
+!backend/.env.example
+!frontend/.env.example
+
+# Build outputs
 frontend/dist/
 dist/
 .DS_Store
