@@ -1,6 +1,11 @@
-# PhishGuard AI
+# WEB_GUARD_AI (PhishGuard AI)
 
-PhishGuard AI is a comprehensive cybersecurity platform designed for deep domain intelligence and threat detection. It analyzes URLs against various threat databases, performs heuristic phishing analysis, detects piracy-related content, and provides detailed reconnaissance data including SSL validity, domain age, and hosting intelligence.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D18.0.0-green.svg)](https://nodejs.org/)
+[![React Version](https://img.shields.io/badge/React-18-blue.svg)](https://reactjs.org/)
+[![Vite](https://img.shields.io/badge/Vite-5.0-646CFF.svg)](https://vitejs.dev/)
+
+WEB_GUARD_AI is a comprehensive cybersecurity platform designed for deep domain intelligence and threat detection. It analyzes URLs against various threat databases, performs heuristic phishing analysis, detects piracy-related content, and provides detailed reconnaissance data including SSL validity, domain age, and hosting intelligence.
 
 ## Tech Stack
 
@@ -12,14 +17,14 @@ PhishGuard AI is a comprehensive cybersecurity platform designed for deep domain
 ## Project Structure
 
 ```text
-phishguard-ai/
+WEB_GUARD_AI/
 ├── backend/
 │   ├── data/               # Threat intelligence datasets (JSON)
 │   ├── models/             # Mongoose database schemas
 │   ├── routes/             # Express API endpoints
 │   ├── services/           # Backend intelligence & analyzer modules
 │   ├── server.js           # Main application entry point
-│   └── .env                # Environment configuration
+│   └── .env                # Environment configuration (ignored in git)
 ├── frontend/
 │   ├── src/
 │   │   ├── components/     # UI Dashboard and Scan components
@@ -36,8 +41,8 @@ Follow these steps to set up the project locally:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/selvipraveen252-png/phishguard-ai.git
-   cd phishguard-ai
+   git clone https://github.com/rajeshkannaj7-ai/WEB_GUARD_AI.git
+   cd WEB_GUARD_AI
    ```
 
 2. **Backend Setup:**
@@ -54,7 +59,7 @@ Follow these steps to set up the project locally:
 
 ## Environment Variables Setup
 
-Create a `.env` file in the `backend/` directory and add the following variables:
+Create a `.env` file in the `backend/` directory (you can copy `.env.example`):
 
 ```env
 PORT=5000
@@ -66,7 +71,7 @@ VT_API_KEY=your_virustotal_api_key
 
 ## API Keys Setup
 
-To enable full intelligence features, you must obtain API keys from the following providers:
+To enable full intelligence features, you can obtain API keys from the following providers:
 
 1. **IP Geolocation (IPinfo):**
    - Visit [ipinfo.io](https://ipinfo.io)
@@ -123,4 +128,4 @@ The frontend application will run at: `http://localhost:5173`
 
 ## Author
 
-PhishGuard AI Developer Team
+WEB_GUARD_AI Team
