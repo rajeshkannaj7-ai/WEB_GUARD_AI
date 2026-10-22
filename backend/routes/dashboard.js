@@ -1,13 +1,22 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const Scan = require('../models/Scan');
+const { getInMemoryDashboardStats } = require('../services/inMemoryStore');
 
 /**
  * GET /api/dashboard
- * Real aggregated statistics from MongoDB
+ * Aggregated statistics (from MongoDB or in-memory fallback)
  */
 router.get('/', async (req, res, next) => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.json({
+        success: true,
+        data: getInMemoryDashboardStats()
+      });
+    }
+
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const last7Days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -105,7 +114,11 @@ router.get('/', async (req, res, next) => {
       }
     });
   } catch (err) {
-    next(err);
+    console.warn('⚠️ Dashboard query error, falling back to in-memory stats:', err.message);
+    res.json({
+      success: true,
+      data: getInMemoryDashboardStats()
+    });
   }
 });
 

@@ -4,15 +4,28 @@ const { checkVirusTotal } = require('./virusTotal');
 class ReputationScanner {
   static async analyze(url) {
     const [gsb, vt] = await Promise.all([
-      checkGoogleSafeBrowsing(url).catch(() => ({ isSafe: true, threats: [] })),
-      checkVirusTotal(url).catch(() => ({ malicious: 0, suspicious: 0 }))
+      checkGoogleSafeBrowsing(url).catch(err => ({
+        status: 'UNAVAILABLE',
+        isSafe: true,
+        threats: [],
+        error: err.message
+      })),
+      checkVirusTotal(url).catch(err => ({
+        status: 'UNAVAILABLE',
+        malicious: 0,
+        suspicious: 0,
+        harmless: 0,
+        undetected: 0,
+        totalEngines: 0,
+        error: err.message
+      }))
     ]);
 
     let score = 0;
     const flags = [];
 
     if (!gsb.isSafe) {
-      score += 85; // Very high, but we'll cap at 100 later
+      score += 85;
       flags.push("Blacklisted by Google Safe Browsing");
     }
 

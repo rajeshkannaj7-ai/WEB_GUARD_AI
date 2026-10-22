@@ -1,13 +1,11 @@
 import { useState } from 'react'
 import { getDomainInfo, getIPIntelligence } from '../services/api'
 
-const TerminalRow = ({ label, value, highlight }) => (
-  <div className="flex items-start mb-2 group">
-    <span className="text-gray-500 w-48 shrink-0 flex items-center before:content-['>'] before:mr-2 before:text-cyber-border group-hover:before:text-cyber-cyan transition-colors">
-      {label}
-    </span>
-    <span className={`${highlight ? 'text-cyber-cyan' : 'text-gray-300'} break-all`}>
-      {value || '[ NO DATA OBFUSCATED ]'}
+const ReconRow = ({ label, value, highlight }) => (
+  <div className="flex items-center justify-between py-1.5 border-b border-slate-800/60 font-mono text-xs">
+    <span className="text-slate-400 text-[11px] uppercase">{label}</span>
+    <span className={`font-semibold ${highlight ? 'text-sky-400' : 'text-slate-200'} truncate max-w-[280px]`}>
+      {value || 'Unknown / Obfuscated'}
     </span>
   </div>
 )
@@ -21,19 +19,20 @@ export default function DomainInfo() {
 
   const handleLookup = async (e) => {
     e.preventDefault()
-    const d = domain.trim().replace(/^https?:\/\//, '').split('/')[0]
-    if (!d) return
+    const cleanDomain = domain.trim().replace(/^https?:\/\//, '').split('/')[0].split(':')[0]
+    if (!cleanDomain) return
 
     setLoading(true)
     setResult(null)
+    setIpIntel(null)
     setError(null)
 
     try {
       const [res, ipRes] = await Promise.all([
-        getDomainInfo(d),
-        getIPIntelligence(d).catch(err => {
-          console.warn('IP Intel failed:', err.message);
-          return null;
+        getDomainInfo(cleanDomain),
+        getIPIntelligence(cleanDomain).catch(err => {
+          console.warn('IP Intel lookup error:', err.message)
+          return null
         })
       ])
       setResult(res.data)
@@ -46,164 +45,189 @@ export default function DomainInfo() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in relative z-10">
-      <div>
-        <h2 className="text-2xl font-bold tracking-wide text-white">DOMAIN RECONNAISSANCE</h2>
-        <p className="text-gray-400 font-mono text-xs mt-1">GATHER WHOIS, DNS, AND SSL INTELLIGENCE ON A TARGET DOMAIN</p>
+    <div className="space-y-5 animate-fade-in relative z-10 max-w-6xl mx-auto">
+      {/* Header */}
+      <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight text-white uppercase font-sans">
+            Domain Reconnaissance
+          </h2>
+          <p className="text-slate-400 font-mono text-xs mt-0.5">
+            Extract WHOIS, DNS routing, and IP intelligence on target hosts
+          </p>
+        </div>
       </div>
 
-      <div className="soc-card p-6 border-t-2 border-t-cyber-cyan">
-        <form onSubmit={handleLookup} className="flex gap-4">
+      {/* Input Box */}
+      <div className="soc-card p-4 bg-slate-900/60 border border-slate-800">
+        <form onSubmit={handleLookup} className="flex gap-3">
           <input
             type="text"
             value={domain}
             onChange={e => setDomain(e.target.value)}
-            placeholder="[ ENTER TARGET DOMAIN ]"
-            className="input-soc font-mono"
+            placeholder="Enter domain name (e.g. google.com or paypal.com)"
+            className="input-soc font-mono text-sm flex-1"
             disabled={loading}
           />
-          <button type="submit" className="btn-primary min-w-[200px]" disabled={loading || !domain.trim()}>
+          <button
+            type="submit"
+            className="btn-primary min-w-[170px]"
+            disabled={loading || !domain.trim()}
+          >
             {loading ? (
-              <span className="font-mono flex items-center justify-center gap-3">
-                <span className="w-4 h-4 border-2 border-cyber-cyan border-t-transparent rounded-full animate-spin"></span>
-                EXTRACTING...
-              </span>
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <span>EXTRACTING...</span>
+              </>
             ) : (
-              <span className="font-mono tracking-wider">INITIATE RECON</span>
+              <>
+                <span>⌘</span>
+                <span>INITIATE RECON</span>
+              </>
             )}
           </button>
         </form>
       </div>
 
+      {/* Error */}
       {error && (
-        <div className="bg-cyber-red/10 border border-cyber-red text-cyber-red px-4 py-3 rounded-lg font-mono text-sm">
-          [ RECON FAILED ] {error}
+        <div className="bg-red-950/40 border border-red-800/80 text-red-300 px-4 py-3 rounded text-xs font-mono">
+          [ RECON ERROR ] {error}
         </div>
       )}
 
+      {/* Results Grid */}
       {result && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slide-up">
-          {/* WHOIS DATA */}
-          <div className="soc-card p-6">
-            <h3 className="text-cyber-cyan font-mono text-sm uppercase tracking-widest mb-4 border-b border-cyber-border pb-2 inline-block">
-              // WHOIS REGISTRATION DATA
-            </h3>
-            <div className="font-mono text-xs space-y-3 mt-4">
-              <TerminalRow label="TARGET" value={result.domain} highlight />
-              <TerminalRow label="REGISTRAR" value={result.registrar} />
-              <TerminalRow label="REGISTRANT COUNTRY" value={result.country} />
-              <TerminalRow label="DOMAIN AGE" value={result.domainAge != null ? `${result.domainAge} DAYS` : null} />
-              <TerminalRow 
-                label="CREATION DATE" 
-                value={result.creationDate ? new Date(result.creationDate).toISOString().split('T')[0] : null} 
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-slide-up">
+          
+          {/* Card 1: WHOIS Registration Intelligence */}
+          <div className="soc-card p-4 border border-slate-800 bg-slate-900/40">
+            <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+              <h4 className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
+                WHOIS Registration Intelligence
+              </h4>
+              <span className="text-sky-400 font-mono text-[10px] bg-sky-950/60 border border-sky-800/60 px-1.5 py-0.5 rounded">
+                WHOIS-XML
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              <ReconRow label="Target Domain" value={result.domain} highlight />
+              <ReconRow label="Registrar Name" value={result.registrar} />
+              <ReconRow label="Registrant Country" value={result.country} />
+              <ReconRow 
+                label="Domain Age" 
+                value={result.domainAge != null ? `${result.domainAge} days (~${(result.domainAge / 365).toFixed(1)} yrs)` : 'Unknown'} 
               />
-              <TerminalRow 
-                label="EXPIRATION DATE" 
-                value={result.expirationDate ? new Date(result.expirationDate).toISOString().split('T')[0] : null} 
+              <ReconRow 
+                label="Creation Date" 
+                value={result.creationDate ? new Date(result.creationDate).toISOString().split('T')[0] : 'Unknown'} 
+              />
+              <ReconRow 
+                label="Expiration Date" 
+                value={result.expirationDate ? new Date(result.expirationDate).toISOString().split('T')[0] : 'Unknown'} 
+              />
+              <ReconRow 
+                label="Hosting Provider" 
+                value={result.hostingProvider} 
               />
             </div>
-            
-            {/* IP INTELLIGENCE */}
-            {ipIntel && (
-              <div className="soc-card p-6 border-t border-cyber-cyan/30">
-                <h3 className="text-cyber-cyan font-mono text-sm uppercase tracking-widest mb-4 border-b border-cyber-border pb-2 inline-block">
-                  // IP INTELLIGENCE & GEOLOCATION
-                </h3>
-                <div className="font-mono text-xs space-y-3 mt-4">
-                  <TerminalRow label="IP ADDRESS" value={ipIntel.ip} highlight />
-                  <div className="flex items-start mb-2 group">
-                    <span className="text-gray-500 w-48 shrink-0 flex items-center before:content-['>'] before:mr-2 before:text-cyber-border">COUNTRY</span>
-                    <span className="text-gray-300 flex items-center gap-2">
-                      {ipIntel.country && (
-                        <img 
-                          src={`https://flagcdn.com/w20/${ipIntel.country.toLowerCase()}.png`} 
-                          alt={ipIntel.country}
-                          className="w-4 h-3 opacity-80"
-                          onError={(e) => e.target.style.display = 'none'}
-                        />
-                      )}
-                      {ipIntel.country}
-                    </span>
-                  </div>
-                  <TerminalRow label="REGION" value={ipIntel.region} />
-                  <TerminalRow label="CITY" value={ipIntel.city} />
-                  <TerminalRow label="ISP / ORG" value={ipIntel.org} />
-                  <div className="flex items-start mb-2 group">
-                    <span className="text-gray-500 w-48 shrink-0 flex items-center before:content-['>'] before:mr-2 before:text-cyber-border">ASN NETWORK</span>
-                    <span className="text-cyber-cyan font-bold bg-cyber-cyan/10 px-2 py-0.5 rounded">
-                      {ipIntel.asn || 'UNKNOWN'}
-                    </span>
+          </div>
+
+          {/* Card 2: IP Intelligence & Geolocation */}
+          <div className="soc-card p-4 border border-slate-800 bg-slate-900/40">
+            <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+              <h4 className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
+                IP Geolocation & Routing
+              </h4>
+              <span className="text-emerald-400 font-mono text-[10px] bg-emerald-950/60 border border-emerald-800/60 px-1.5 py-0.5 rounded">
+                IP-INTEL
+              </span>
+            </div>
+
+            {ipIntel ? (
+              <div className="space-y-1">
+                <ReconRow label="Resolved IP" value={ipIntel.ip} highlight />
+                <div className="flex items-center justify-between py-1.5 border-b border-slate-800/60 font-mono text-xs">
+                  <span className="text-slate-400 text-[11px] uppercase">Country</span>
+                  <div className="flex items-center gap-1.5 text-slate-200">
+                    {ipIntel.country && (
+                      <img 
+                        src={`https://flagcdn.com/w20/${ipIntel.country.toLowerCase()}.png`} 
+                        alt={ipIntel.country}
+                        className="w-3.5 h-2.5 opacity-90 inline-block"
+                        onError={(e) => e.target.style.display = 'none'}
+                      />
+                    )}
+                    <span>{ipIntel.country}</span>
                   </div>
                 </div>
+                <ReconRow label="City / Region" value={[ipIntel.city, ipIntel.region].filter(Boolean).join(', ')} />
+                <ReconRow label="ISP Organization" value={ipIntel.org} />
+                <ReconRow label="Autonomous System (ASN)" value={ipIntel.asn} />
+              </div>
+            ) : (
+              <div className="py-6 text-center text-slate-500 font-mono text-xs">
+                IP intelligence query not resolved for this host.
               </div>
             )}
-
           </div>
 
-          {/* INFRASTRUCTURE DATA */}
-          <div className="space-y-6">
-            
-            {/* SSL */}
-            <div className="soc-card p-6">
-              <h3 className="text-cyber-cyan font-mono text-sm uppercase tracking-widest mb-4 border-b border-cyber-border pb-2 inline-block">
-                // SSL/TLS HANDSHAKE
-              </h3>
-              <div className="font-mono text-xs space-y-3 mt-4">
-                <div className="flex items-center gap-3 mb-4">
-                  <span className="text-gray-500 w-48 shrink-0 flex items-center before:content-['>'] before:mr-2 before:text-cyber-border">CERTIFICATE STATUS</span>
-                  <span className={`px-2 py-0.5 rounded ${result.ssl?.valid ? 'bg-cyber-green/20 text-cyber-green border border-cyber-green/50' : 'bg-cyber-red/20 text-cyber-red border border-cyber-red/50'}`}>
-                    {result.ssl?.status}
-                  </span>
-                </div>
-                {result.ssl?.daysRemaining > 0 && (
-                  <TerminalRow label="DAYS REMAINING" value={result.ssl.daysRemaining} />
-                )}
-                {result.ssl?.validFrom && (
-                  <TerminalRow label="ISSUED AT" value={new Date(result.ssl.validFrom).toISOString().split('T')[0]} />
-                )}
-                {result.ssl?.validTo && (
-                  <TerminalRow label="EXPIRES AT" value={new Date(result.ssl.validTo).toISOString().split('T')[0]} />
-                )}
-              </div>
+          {/* Card 3: Nameservers & DNS */}
+          <div className="soc-card p-4 border border-slate-800 bg-slate-900/40">
+            <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+              <h4 className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
+                Active Nameservers (DNS)
+              </h4>
+              <span className="text-slate-500 font-mono text-[10px]">
+                {result.nameservers?.length || 0} SERVERS
+              </span>
             </div>
 
-            {/* DNS */}
-            <div className="soc-card p-6">
-              <h3 className="text-cyber-cyan font-mono text-sm uppercase tracking-widest mb-4 border-b border-cyber-border pb-2 inline-block">
-                // DNS & NETWORK MAP
-              </h3>
-              <div className="font-mono text-xs space-y-3 mt-4">
-                <TerminalRow label="HOSTING PROVIDER" value={result.hostingProvider} highlight />
-                
-                {result.ipAddresses?.length > 0 && (
-                  <div className="flex items-start mt-4">
-                    <span className="text-gray-500 w-48 shrink-0 flex items-center before:content-['>'] before:mr-2 before:text-cyber-border">RESOLVED IP(s)</span>
-                    <div className="flex flex-col gap-1">
-                      {result.ipAddresses.map((ip, i) => (
-                        <span key={i} className="text-gray-300 bg-gray-800/50 px-2 py-1 rounded inline-block w-fit">
-                          {ip}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {result.nameservers?.length > 0 && (
-                  <div className="flex items-start mt-4">
-                    <span className="text-gray-500 w-48 shrink-0 flex items-center before:content-['>'] before:mr-2 before:text-cyber-border">NAME SERVERS</span>
-                    <div className="flex flex-col gap-1">
-                      {result.nameservers.slice(0, 4).map((ns, i) => (
-                        <span key={i} className="text-gray-400">
-                          - {ns}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
+            {result.nameservers && result.nameservers.length > 0 ? (
+              <ul className="space-y-1.5 font-mono text-xs">
+                {result.nameservers.map((ns, idx) => (
+                  <li key={idx} className="flex items-center justify-between py-1 border-b border-slate-800/50">
+                    <span className="text-slate-500 text-[11px]">NS #{idx + 1}</span>
+                    <span className="text-slate-300 font-semibold">{ns}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-slate-500 font-mono text-xs py-4">No nameserver records detected.</div>
+            )}
           </div>
+
+          {/* Card 4: SSL/TLS Security Status */}
+          <div className="soc-card p-4 border border-slate-800 bg-slate-900/40">
+            <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+              <h4 className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
+                SSL / TLS Inspection
+              </h4>
+              <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
+                result.ssl?.valid ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/60' : 'bg-red-950/60 text-red-400 border border-red-800/60'
+              }`}>
+                {result.ssl?.valid ? 'SECURE' : 'INSECURE'}
+              </span>
+            </div>
+
+            <div className="space-y-1 font-mono text-xs">
+              <ReconRow label="Certificate Status" value={result.ssl?.status} highlight={result.ssl?.valid} />
+              <ReconRow 
+                label="Days Remaining" 
+                value={result.ssl?.daysRemaining != null ? `${result.ssl.daysRemaining} days` : 'N/A'} 
+              />
+              <ReconRow 
+                label="Valid From" 
+                value={result.ssl?.validFrom ? new Date(result.ssl.validFrom).toISOString().split('T')[0] : 'Unknown'} 
+              />
+              <ReconRow 
+                label="Valid To" 
+                value={result.ssl?.validTo ? new Date(result.ssl.validTo).toISOString().split('T')[0] : 'Unknown'} 
+              />
+            </div>
+          </div>
+
         </div>
       )}
     </div>

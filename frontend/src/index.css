@@ -3,118 +3,165 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #0B1220;
-  --bg-card: #111827;
-  --bg-border: #1F2937;
-  
-  --accent-cyan: #06B6D4;
-  --accent-green: #22C55E;
-  --accent-red: #EF4444;
-  --accent-yellow: #F59E0B;
+  --soc-bg: #080C14;
+  --soc-surface: #0D1322;
+  --soc-card: #111A2E;
+  --soc-border: #1E293B;
+  --soc-border-subtle: #162035;
+
+  --soc-accent: #0EA5E9;
+  --soc-safe: #10B981;
+  --soc-warning: #F59E0B;
+  --soc-critical: #EF4444;
 }
 
 body {
-  background-color: var(--bg-primary);
-  color: #e2e8f0;
-  font-family: 'Inter', system-ui, sans-serif;
+  background-color: var(--soc-bg);
+  color: #E2E8F0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom Scrollbar matching dark theme */
+/* Custom Compact Dark Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-primary);
+  background: #080C14;
 }
 ::-webkit-scrollbar-thumb {
-  background: #374151;
-  border-radius: 4px;
+  background: #1E293B;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #4B5563;
+  background: #334155;
 }
 
-/* Security Cards */
+/* Enterprise SOC Card */
 .soc-card {
-  background-color: var(--bg-card);
-  border: 1px solid var(--bg-border);
-  border-radius: 0.75rem;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
-  transition: all 0.2s ease;
+  background-color: var(--soc-card);
+  border: 1px solid var(--soc-border);
+  border-radius: 0.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .soc-card:hover {
-  border-color: #374151;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+  border-color: #334155;
 }
 
-/* Glowing Elements */
-.glow-cyan {
-  box-shadow: 0 0 15px rgba(6, 182, 212, 0.3);
-  border-color: rgba(6, 182, 212, 0.5);
-}
-.glow-red {
-  box-shadow: 0 0 15px rgba(239, 68, 68, 0.3);
-  border-color: rgba(239, 68, 68, 0.5);
-}
-.glow-yellow {
-  box-shadow: 0 0 15px rgba(245, 158, 11, 0.3);
-  border-color: rgba(245, 158, 11, 0.5);
-}
-.glow-green {
-  box-shadow: 0 0 15px rgba(34, 197, 94, 0.3);
-  border-color: rgba(34, 197, 94, 0.5);
-}
-
-/* Button */
-.btn-primary {
-  @apply bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2.5 px-6 rounded-lg;
-  @apply transition-colors duration-200 border border-cyan-400/30;
-  box-shadow: 0 0 10px rgba(6, 182, 212, 0.2);
-}
-
-/* Input */
+/* Clean Input Field */
 .input-soc {
-  @apply bg-gray-900 border border-gray-700 rounded-lg py-3 px-4;
-  @apply focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50;
-  @apply outline-none text-white transition-colors w-full;
+  background-color: #0B1220;
+  border: 1px solid var(--soc-border);
+  border-radius: 0.375rem;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  color: #F8FAFC;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  width: 100%;
+}
+.input-soc:focus {
+  border-color: var(--soc-accent);
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.3);
+}
+.input-soc:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
-/* Table */
+/* Enterprise Action Buttons */
+.btn-primary {
+  background-color: #0284C7;
+  color: #FFFFFF;
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.375rem;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.btn-primary:hover:not(:disabled) {
+  background-color: #0369A1;
+  border-color: rgba(56, 189, 248, 0.5);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* High-Density SOC Table */
 .soc-table {
-  @apply w-full border-collapse text-sm;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
 }
 .soc-table th {
-  @apply text-left py-3 px-4 font-semibold text-gray-400 bg-gray-900/50 border-b border-gray-800 uppercase tracking-wider text-xs;
+  text-align: left;
+  padding: 0.625rem 0.875rem;
+  font-weight: 600;
+  color: #94A3B8;
+  background-color: rgba(13, 19, 34, 0.8);
+  border-bottom: 1px solid var(--soc-border);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.6875rem;
 }
 .soc-table td {
-  @apply py-4 px-4 border-b border-gray-800 transition-colors;
+  padding: 0.625rem 0.875rem;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.6);
+  transition: background-color 0.1s ease;
 }
 .soc-table tr:hover td {
-  @apply bg-gray-800/30;
+  background-color: rgba(30, 41, 59, 0.25);
 }
 
-/* Risk Badges */
+/* Severity Badges */
 .badge {
-  @apply text-xs font-bold px-2.5 py-1 rounded-md uppercase tracking-wider inline-flex items-center gap-1.5;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  line-height: 1;
 }
 .badge-safe {
-  @apply bg-green-500/10 text-green-400 border border-green-500/30;
+  background-color: rgba(16, 185, 129, 0.1);
+  color: #34D399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
 }
 .badge-suspicious {
-  @apply bg-yellow-500/10 text-yellow-400 border border-yellow-500/30;
+  background-color: rgba(245, 158, 11, 0.1);
+  color: #FBBF24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
 }
-.badge-malicious, .badge-high-risk {
-  @apply bg-red-500/10 text-red-500 border border-red-500/30;
+.badge-malicious, .badge-critical, .badge-high-risk {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #F87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.badge-info {
+  background-color: rgba(14, 165, 233, 0.1);
+  color: #38BDF8;
+  border: 1px solid rgba(14, 165, 233, 0.3);
 }
 
-/* Background Grid */
+/* Subtle background grid */
 .bg-grid {
-  background-image: linear-gradient(to right, #1F2937 1px, transparent 1px),
-    linear-gradient(to bottom, #1F2937 1px, transparent 1px);
-  background-size: 40px 40px;
+  background-image: linear-gradient(to right, rgba(30, 41, 59, 0.3) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(30, 41, 59, 0.3) 1px, transparent 1px);
+  background-size: 32px 32px;
   background-position: center center;
 }

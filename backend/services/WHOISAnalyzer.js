@@ -1,21 +1,68 @@
 const whois = require('whois-json');
 const axios = require('axios');
+const { cache, TTL } = require('./cache');
 
 class WHOISAnalyzer {
-  static async analyze(domain, ipAddresses) {
-    const cleanDomain = domain.split(':')[0].replace(/^www\./, '');
-    let data = {};
-    
+  static async fetchWhoisXml(domain) {
+    const apiKey = process.env.WHOIS_API_KEY;
+    if (!apiKey) return null;
     try {
-      data = await whois(cleanDomain, { timeout: 10000 });
+      const response = await axios.get('https://www.whoisxmlapi.com/whoisserver/WhoisService', {
+        params: {
+          apiKey,
+          domainName: domain,
+          outputFormat: 'JSON'
+        },
+        timeout: 3000 // Strict 3000ms timeout
+      });
+      return response.data?.WhoisRecord || null;
     } catch (err) {
-      console.warn(`WHOIS failed for ${cleanDomain}:`, err.message);
+      const isTimeout = err.code === 'ECONNABORTED' || err.message?.includes('timeout');
+      console.warn(`⚠️ WhoisXML API ${isTimeout ? 'timed out (3000ms)' : 'failed'} for ${domain}:`, err.message);
+      return null;
     }
+  }
 
-    const registrar = this.extractField(data, ['registrar', 'Registrar', 'REGISTRAR', 'Registrar Name']);
-    const country = this.extractField(data, ['registrantCountry', 'country', 'Country', 'Registrant Country']);
-    const creationDateRaw = this.extractField(data, ['creationDate', 'created', 'Created Date', 'Creation Date', 'registered']);
-    const expirationDateRaw = this.extractField(data, ['registrarRegistrationExpirationDate', 'expiresDate', 'Expiry Date', 'Expiration Date']);
+  static async analyze(domain, ipAddresses = []) {
+    const cleanDomain = domain.split(':')[0].replace(/^www\./, '');
+    const cacheKey = `whois:${cleanDomain}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return { ...cached, isCached: true };
+
+    let data = {};
+    let registrar = null;
+    let country = null;
+    let creationDateRaw = null;
+    let expirationDateRaw = null;
+    let nsList = [];
+    let status = 'COMPLETE';
+
+    // Attempt WhoisXML API first with 3000ms timeout
+    const xmlRecord = await this.fetchWhoisXml(cleanDomain);
+    const hasValidRecord = xmlRecord && xmlRecord.dataError !== 'MISSING_WHOIS_DATA' && 
+                           (xmlRecord.registrarName || xmlRecord.registryData || xmlRecord.createdDate);
+
+    if (hasValidRecord) {
+      registrar = xmlRecord.registrarName || xmlRecord.registryData?.registrarName || null;
+      country = xmlRecord.registrant?.country || xmlRecord.registrant?.countryCode || 
+                xmlRecord.registryData?.registrant?.country || xmlRecord.registryData?.registrant?.countryCode || null;
+      creationDateRaw = xmlRecord.createdDate || xmlRecord.registryData?.createdDate || null;
+      expirationDateRaw = xmlRecord.expiresDate || xmlRecord.registryData?.expiresDate || null;
+      nsList = xmlRecord.nameServers?.hostNames || xmlRecord.registryData?.nameServers?.hostNames || [];
+    } else {
+      // Fallback to socket WHOIS lookup with short 3000ms timeout
+      try {
+        data = await whois(cleanDomain, { timeout: 3000 });
+        registrar = this.extractField(data, ['registrar', 'Registrar', 'REGISTRAR', 'Registrar Name']);
+        country = this.extractField(data, ['registrantCountry', 'country', 'Country', 'Registrant Country']);
+        creationDateRaw = this.extractField(data, ['creationDate', 'created', 'Created Date', 'Creation Date', 'registered']);
+        expirationDateRaw = this.extractField(data, ['registrarRegistrationExpirationDate', 'expiresDate', 'Expiry Date', 'Expiration Date']);
+        nsList = data.nameServer || data.nameServers || [];
+      } catch (err) {
+        console.warn(`⚠️ WHOIS socket lookup failed for ${cleanDomain}:`, err.message);
+        status = err.message?.includes('timeout') ? 'TIMEOUT' : 'DATA UNAVAILABLE';
+      }
+    }
 
     let age = null;
     let creationDate = null;
@@ -38,11 +85,12 @@ class WHOISAnalyzer {
 
     // Cloudflare detection
     if (hostingProvider.toLowerCase().includes('cloudflare') || 
-        (data.nameServer && JSON.stringify(data.nameServer).toLowerCase().includes('cloudflare'))) {
+        JSON.stringify(nsList).toLowerCase().includes('cloudflare')) {
       hostingProvider = 'Cloudflare CDN Protected';
     }
 
-    return {
+    const result = {
+      status: (registrar || country || creationDate) ? 'COMPLETE' : status,
       registrar: registrar || 'Unknown',
       country: country || 'Unknown',
       creationDate,
@@ -51,8 +99,11 @@ class WHOISAnalyzer {
       hostingProvider,
       asn,
       isRecent: age !== null && age < 365,
-      score: (age !== null && age < 365 ? 10 : 0) + (registrar === 'Unknown' ? 10 : 0)
+      score: (age !== null && age < 365 ? 10 : 0) + (!registrar || registrar === 'Unknown' ? 10 : 0)
     };
+
+    cache.set(cacheKey, result, TTL.WHOIS);
+    return result;
   }
 
   static extractField(data, keys) {
@@ -66,6 +117,11 @@ class WHOISAnalyzer {
   }
 
   static async getHostingProvider(ip) {
+    if (!ip) return { name: 'Unknown', asn: 'Unknown' };
+    const cacheKey = `ip:host:${ip}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
+
     const apis = [
       { url: `https://ipinfo.io/${ip}/json?token=${process.env.IPINFO_API_KEY}`, parse: d => ({ name: d.org, asn: d.asn || (d.org?.startsWith('AS') ? d.org.split(' ')[0] : 'Unknown') }) },
       { url: `https://ipapi.co/${ip}/json/`, parse: d => ({ name: d.org, asn: d.asn }) },
@@ -74,22 +130,43 @@ class WHOISAnalyzer {
 
     for (const api of apis) {
       try {
-        const res = await axios.get(api.url, { timeout: 3000 });
+        const res = await axios.get(api.url, { timeout: 2000 });
         const provider = api.parse(res.data);
-        if (provider.name) return provider;
+        if (provider.name) {
+          cache.set(cacheKey, provider, TTL.IP);
+          return provider;
+        }
       } catch (e) {
         continue;
       }
     }
-    return { name: 'Unknown', asn: 'Unknown' };
+    const fallback = { name: 'Unknown', asn: 'Unknown' };
+    cache.set(cacheKey, fallback, TTL.IP);
+    return fallback;
   }
 
   static async checkRegistration(domain) {
     const cleanDomain = domain.split(':')[0].replace(/^www\./, '');
+    const cacheKey = `whois:reg:${cleanDomain}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
+
+    // WhoisXML API check with 3000ms timeout
+    const xmlRecord = await this.fetchWhoisXml(cleanDomain);
+    if (xmlRecord) {
+      const isUnregistered = xmlRecord.dataError === 'MISSING_WHOIS_DATA' ||
+                             (xmlRecord.parseCode === 0 && !xmlRecord.registrarName);
+      const res = {
+        isRegistered: !isUnregistered,
+        data: xmlRecord
+      };
+      cache.set(cacheKey, res, TTL.WHOIS);
+      return res;
+    }
+
     try {
-      const data = await whois(cleanDomain, { timeout: 5000 });
+      const data = await whois(cleanDomain, { timeout: 3000 });
       
-      // Different WHOIS servers return different strings for "not found"
       const statusStr = JSON.stringify(data).toLowerCase();
       const isUnregistered = 
         statusStr.includes("no match") || 
@@ -97,10 +174,12 @@ class WHOISAnalyzer {
         statusStr.includes("available") ||
         Object.keys(data).length <= 1;
 
-      return {
+      const res = {
         isRegistered: !isUnregistered,
         data: data
       };
+      cache.set(cacheKey, res, TTL.WHOIS);
+      return res;
     } catch (err) {
       return { isRegistered: false, error: err.message };
     }

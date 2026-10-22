@@ -1,16 +1,29 @@
 const axios = require('axios');
+const { cache, TTL } = require('./cache');
 
 /**
  * Query Google Safe Browsing API v4
+ * Optimized with strict 2500ms timeout and server-side caching.
+ * 
  * @param {string} url - URL to check
- * @returns {object} - Safe Browsing result
+ * @returns {Promise<object>} - Safe Browsing result
  */
 async function checkGoogleSafeBrowsing(url) {
+  const cacheKey = `gsb:${url}`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return { ...cached, isCached: true };
+  }
+
   const apiKey = process.env.GOOGLE_SAFE_BROWSING_API_KEY;
   
   if (!apiKey) {
-    console.warn('⚠️ Google Safe Browsing API key not configured');
-    return { isSafe: true, threats: [], error: 'API key not configured' };
+    return {
+      status: 'UNAVAILABLE',
+      isSafe: true,
+      threats: [],
+      error: 'API key not configured'
+    };
   }
 
   try {
@@ -35,25 +48,34 @@ async function checkGoogleSafeBrowsing(url) {
     };
 
     const response = await axios.post(endpoint, requestBody, {
-      timeout: 8000,
+      timeout: 2500,
       headers: { 'Content-Type': 'application/json' }
     });
 
-    const matches = response.data.matches || [];
-    
-    if (matches.length > 0) {
-      const threats = matches.map(m => m.threatType);
-      return {
-        isSafe: false,
-        threats,
-        raw: matches
-      };
-    }
+    const matches = response.data?.matches || [];
+    const isSafe = matches.length === 0;
+    const threats = matches.map(m => m.threatType);
 
-    return { isSafe: true, threats: [] };
+    const result = {
+      status: 'COMPLETE',
+      isSafe,
+      threats,
+      raw: matches
+    };
+
+    cache.set(cacheKey, result, TTL.REPUTATION);
+    return result;
+
   } catch (err) {
-    console.error('❌ Google Safe Browsing error:', err.response?.data || err.message);
-    return { isSafe: true, threats: [], error: err.message };
+    const isTimeout = err.code === 'ECONNABORTED' || err.message?.includes('timeout');
+    console.warn(`⚠️ Google Safe Browsing ${isTimeout ? 'timed out' : 'failed'}:`, err.message);
+
+    return {
+      status: isTimeout ? 'TIMEOUT' : 'UNAVAILABLE',
+      isSafe: true,
+      threats: [],
+      error: isTimeout ? 'Request timed out (2500ms)' : err.message
+    };
   }
 }
 

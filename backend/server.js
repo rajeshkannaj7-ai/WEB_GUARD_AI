@@ -57,15 +57,35 @@ app.get('/api/health', (req, res) => {
 // Error handler
 app.use(errorHandler);
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => {
-    console.log('✅ MongoDB connected to', process.env.MONGO_URI);
-    app.listen(process.env.PORT || 5000, () => {
-      console.log(`🚀 PhishGuard AI Backend running on http://localhost:${process.env.PORT || 5000}`);
-    });
-  })
-  .catch((err) => {
-    console.error('❌ MongoDB connection failed:', err.message);
-    process.exit(1);
+const PORT = process.env.PORT || 5000;
+
+// Start server
+const startServer = () => {
+  app.listen(PORT, () => {
+    console.log(`🚀 PhishGuard AI Backend running on http://localhost:${PORT}`);
   });
+};
+
+// Optional MongoDB Connection
+const connectDB = async () => {
+  if (!process.env.MONGO_URI || process.env.DISABLE_MONGO === 'true') {
+    console.log('⚡ MongoDB disabled - running without database (in-memory mode)');
+    startServer();
+    return;
+  }
+
+  try {
+    await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 2000
+    });
+    console.log('✅ MongoDB connected to', process.env.MONGO_URI);
+    startServer();
+  } catch (err) {
+    console.warn(`⚠️ MongoDB connection failed: ${err.message}`);
+    console.log('⚡ MongoDB disabled - running without database (in-memory mode)');
+    startServer();
+  }
+};
+
+connectDB();
+

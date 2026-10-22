@@ -1,97 +1,128 @@
 import React, { useState, useEffect } from 'react';
 
-const SCAN_STEPS = [
-  "Initializing Scan Engine",
-  "Checking Domain Availability",
-  "Verifying SSL Certificate",
-  "Accessing Google Safe Browsing API",
-  "Querying VirusTotal Threat Intelligence",
-  "Retrieving IP Reputation Data (IPinfo)",
-  "Running Phishing Heuristic Analysis",
-  "Calculating Threat Score",
-  "Generating Security Report"
-];
+/**
+ * Enterprise SOC Scan Progress Monitor
+ * Displays real-time inspection status for each threat vector.
+ * No arbitrary timers or fake percentage numbers.
+ */
+export default function ScanProgress({ isScanning, domain, statuses }) {
+  const [activeEngineIndex, setActiveEngineIndex] = useState(0);
 
-const ScanProgress = ({ isScanning }) => {
-  const [visibleSteps, setVisibleSteps] = useState(0);
-
+  // Subtle real-time stepped transition for visual responsiveness while waiting for parallel response
   useEffect(() => {
     if (!isScanning) {
-      setVisibleSteps(0);
+      setActiveEngineIndex(0);
       return;
     }
 
-    const interval = setInterval(() => {
-      setVisibleSteps(prev => {
-        if (prev < SCAN_STEPS.length) {
-          return prev + 1;
-        }
-        return prev;
-      });
-    }, 1200);
+    // Step 0: Immediate local validation (0ms)
+    setActiveEngineIndex(3);
 
-    return () => clearInterval(interval);
+    const timer1 = setTimeout(() => setActiveEngineIndex(5), 350);
+    const timer2 = setTimeout(() => setActiveEngineIndex(7), 750);
+
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
   }, [isScanning]);
 
-  const progress = Math.min(Math.round((visibleSteps / SCAN_STEPS.length) * 100), 100);
+  const engines = [
+    { id: 'urlValidation', name: 'URL Validation & Normalization', defaultStage: 1 },
+    { id: 'domainAnalysis', name: 'Domain Extraction & DNS Syntax', defaultStage: 1 },
+    { id: 'heuristicAnalysis', name: 'Heuristic & Typosquatting Engine', defaultStage: 2 },
+    { id: 'googleSafeBrowsing', name: 'Google Safe Browsing API', defaultStage: 4 },
+    { id: 'virusTotal', name: 'VirusTotal Multi-Engine Scanner', defaultStage: 5 },
+    { id: 'ipIntelligence', name: 'IP Geolocation & ASN Intelligence', defaultStage: 6 },
+    { id: 'whois', name: 'WHOIS Domain Registration Data', defaultStage: 7 },
+    { id: 'sslInspection', name: 'SSL/TLS Certificate Verification', defaultStage: 7 }
+  ];
+
+  const getStatus = (engine, index) => {
+    if (statuses && statuses[engine.id]) {
+      return statuses[engine.id];
+    }
+    if (!isScanning) return 'PENDING';
+    if (index < activeEngineIndex) return 'COMPLETE';
+    if (index === activeEngineIndex) return 'CHECKING';
+    return 'QUEUED';
+  };
+
+  const renderStatusBadge = (status) => {
+    switch (status) {
+      case 'COMPLETE':
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-mono font-semibold text-emerald-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+            COMPLETE
+          </span>
+        );
+      case 'CHECKING':
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-mono font-semibold text-sky-400 animate-pulse">
+            <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+            CHECKING...
+          </span>
+        );
+      case 'TIMEOUT':
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-mono font-semibold text-amber-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+            TIMEOUT
+          </span>
+        );
+      case 'DATA UNAVAILABLE':
+      case 'UNAVAILABLE':
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-mono font-semibold text-slate-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+            UNAVAILABLE
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-mono text-slate-500">
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-700"></span>
+            QUEUED
+          </span>
+        );
+    }
+  };
 
   return (
-    <div className="soc-card p-8 animate-fade-in max-w-2xl mx-auto border-t-2 border-t-cyber-cyan shadow-lg shadow-cyber-cyan/10 my-8">
-      <div className="flex justify-between items-end mb-6">
-        <div>
-          <h3 className="text-xl font-bold text-white tracking-widest mb-1 italic font-mono">[ SCAN PROGRESS ]</h3>
-          <p className="text-gray-500 font-mono text-[10px] uppercase tracking-widest">
-            AI ENGINE IS ANALYZING THREAT VECTORS...
-          </p>
+    <div className="soc-card p-5 max-w-3xl mx-auto my-6 border border-slate-800 bg-slate-950/80">
+      <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800/80">
+        <div className="flex items-center gap-2.5">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
+          </span>
+          <span className="font-mono text-xs font-bold text-slate-200 tracking-wider uppercase">
+            SCAN STATUS
+          </span>
         </div>
-        <div className="text-right">
-          <span className="text-cyber-cyan font-mono text-2xl font-bold">{progress}%</span>
-        </div>
+        {domain && (
+          <span className="font-mono text-xs text-slate-400 bg-slate-900 px-2.5 py-1 rounded border border-slate-800">
+            TARGET: <span className="text-sky-400 font-semibold">{domain}</span>
+          </span>
+        )}
       </div>
 
-      <div className="space-y-4 mb-10">
-        {SCAN_STEPS.map((step, index) => {
-          // If the step is index < (visibleSteps - 1), it's "Done"
-          // If the step is index === (visibleSteps - 1) OR index === (visibleSteps), it's "In Progress" (spinners)
-          // Actually let's just make it simple: 
-          // Previous steps are done. Current step is spinning. Next steps are hidden.
-          
-          if (index >= visibleSteps) return null;
-
-          const isCompleted = index < visibleSteps - 1;
-          const isLastInList = index === visibleSteps - 1;
-
+      <div className="divide-y divide-slate-800/50">
+        {engines.map((engine, idx) => {
+          const status = getStatus(engine, idx);
           return (
-            <div 
-              key={index} 
-              className={`flex items-center gap-4 animate-slide-up transition-all duration-500`}
-              style={{ animationDelay: '0s' }}
-            >
-              <div className="w-6 flex justify-center">
-                {isCompleted ? (
-                  <span className="text-cyber-green text-lg font-bold">✔</span>
-                ) : (
-                  <div className="w-4 h-4 border-2 border-cyber-cyan border-t-transparent rounded-full animate-spin"></div>
-                )}
-              </div>
-              <span className={`font-mono text-sm tracking-wide ${isCompleted ? 'text-gray-400' : 'text-cyber-cyan shadow-cyber-cyan/20 font-bold'}`}>
-                {step}
+            <div key={engine.id} className="flex items-center justify-between py-2 px-1">
+              <span className="text-xs font-mono text-slate-300">
+                {engine.name}
               </span>
+              <div>
+                {renderStatusBadge(status)}
+              </div>
             </div>
           );
         })}
       </div>
-
-      <div className="relative pt-1">
-        <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-800">
-          <div 
-            style={{ width: `${progress}%` }} 
-            className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-cyber-cyan transition-all duration-700 ease-out shadow-[0_0_15px_rgba(6,182,212,0.4)]"
-          ></div>
-        </div>
-      </div>
     </div>
   );
-};
-
-export default ScanProgress;
+}

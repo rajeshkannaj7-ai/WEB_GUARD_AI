@@ -7,9 +7,9 @@ import Domain from './pages/Domain'
 export default function App() {
   return (
     <Router>
-      <div className="min-h-screen bg-grid" style={{ backgroundColor: '#0f0f1a' }}>
+      <div className="min-h-screen bg-grid" style={{ backgroundColor: '#080C14' }}>
         <Navbar />
-        <main className="ml-60 min-h-screen p-8">
+        <main className="ml-56 min-h-screen p-6">
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/scan" element={<Scan />} />

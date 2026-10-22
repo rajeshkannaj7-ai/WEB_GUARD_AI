@@ -1,96 +1,145 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { scanUrl, getIPIntelligence } from '../services/api'
+import ScanProgress from './ScanProgress'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 
-const ThreatGauge = ({ score }) => {
-  const color = score > 50 ? '#EF4444' : score > 20 ? '#F59E0B' : '#22C55E'
-  const offset = 251.3 - (score / 100) * 251.3
+/**
+ * Compact Threat Score Gauge (SVG)
+ */
+const ThreatScoreBadge = ({ score, riskLevel }) => {
+  const isCritical = score > 50 || riskLevel === 'MALICIOUS' || riskLevel === 'HIGH RISK';
+  const isSuspicious = !isCritical && (score > 20 || riskLevel === 'SUSPICIOUS');
+
+  const strokeColor = isCritical ? '#EF4444' : isSuspicious ? '#F59E0B' : '#10B981';
+  const textColor = isCritical ? 'text-red-400' : isSuspicious ? 'text-amber-400' : 'text-emerald-400';
+  const radius = 28;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (score / 100) * circumference;
 
   return (
-    <div className="relative w-40 h-40 flex items-center justify-center">
-      {/* Background circle */}
-      <svg className="w-full h-full transform -rotate-90">
-        <circle cx="80" cy="80" r="40" stroke="#1F2937" strokeWidth="8" fill="none" />
-        {/* Animated score circle */}
-        <circle
-          cx="80"
-          cy="80"
-          r="40"
-          stroke={color}
-          strokeWidth="8"
-          fill="none"
-          strokeDasharray="251.3"
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          className="transition-all duration-1000 ease-out"
-          style={{ filter: `drop-shadow(0 0 6px ${color})` }}
-        />
-      </svg>
-      <div className="absolute flex flex-col items-center">
-        <span className={`text-4xl font-mono font-bold`} style={{ color }}>{score}</span>
-        <span className="text-[10px] text-gray-500 font-mono tracking-widest uppercase mt-1">Threat Score</span>
+    <div className="flex items-center gap-3.5">
+      <div className="relative w-16 h-16 shrink-0 flex items-center justify-center">
+        <svg className="w-full h-full transform -rotate-90">
+          <circle cx="32" cy="32" r={radius} stroke="#1E293B" strokeWidth="5" fill="none" />
+          <circle
+            cx="32"
+            cy="32"
+            r={radius}
+            stroke={strokeColor}
+            strokeWidth="5"
+            fill="none"
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            className="transition-all duration-700 ease-out"
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className={`text-base font-mono font-bold ${textColor}`}>
+            {score}
+          </span>
+        </div>
+      </div>
+      <div>
+        <span className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+          Threat Score
+        </span>
+        <span className={`text-lg font-mono font-bold leading-tight ${textColor}`}>
+          {score} <span className="text-xs font-normal text-slate-500">/ 100</span>
+        </span>
       </div>
     </div>
   )
 }
-
-import ScanProgress from './ScanProgress'
 
 export default function ScanPage() {
   const [url, setUrl] = useState('')
   const [scanning, setScanning] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  const [currentDomain, setCurrentDomain] = useState('')
+  
   const reportRef = useRef(null)
+  const abortControllerRef = useRef(null)
 
-  const handleScan = async (e) => {
-    e.preventDefault()
-    if (!url.trim()) return
+  // Clean up any pending scan on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
+  }, [])
 
+  const handleScan = useCallback(async (e) => {
+    e?.preventDefault()
+    const targetUrl = url.trim()
+    if (!targetUrl) return
+
+    // Cancel any previous in-flight scan immediately
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    abortControllerRef.current = new AbortController()
+
+    let parsedDomain = ''
+    try {
+      parsedDomain = targetUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]
+    } catch (_) {
+      parsedDomain = targetUrl
+    }
+
+    setCurrentDomain(parsedDomain)
     setScanning(true)
-    setResult(null)
     setError(null)
 
     try {
-      const res = await scanUrl(url.trim())
+      const res = await scanUrl(targetUrl, {
+        signal: abortControllerRef.current.signal
+      })
+
       let finalData = res.data
-      
-      // Fetch IP Intelligence
-      try {
-        const ipData = await getIPIntelligence(res.data.domain)
-        finalData = { ...finalData, ipIntel: ipData }
-      } catch (ipErr) {
-        console.warn('IP Intelligence fetch failed', ipErr)
+
+      // If backend didn't include IP intel, fetch as non-blocking fallback
+      if (!finalData.ipIntel && finalData.domain) {
+        try {
+          const ipData = await getIPIntelligence(finalData.domain)
+          finalData = { ...finalData, ipIntel: ipData }
+        } catch (ipErr) {
+          console.warn('IP Intelligence fallback fetch warning:', ipErr.message)
+        }
       }
 
       setResult(finalData)
+      setError(null)
     } catch (err) {
-      setError(err.message)
+      // Ignore user-initiated abort cancellations
+      if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED') {
+        return
+      }
+      setError(err.message || 'Scan failed. Please check the URL and try again.')
     } finally {
       setScanning(false)
     }
-  }
+  }, [url])
 
   const downloadReport = async () => {
     if (!reportRef.current || !result) return
-    
-    // Temporarily hide the download button to prevent it from showing in the PDF
     const btn = document.getElementById('dl-btn')
     if (btn) btn.style.display = 'none'
 
     try {
       const canvas = await html2canvas(reportRef.current, {
         scale: 2,
-        backgroundColor: '#0B1220',
+        backgroundColor: '#080C14',
         logging: false
       })
-      
       const imgData = canvas.toDataURL('image/png')
       const pdf = new jsPDF('p', 'mm', 'a4')
       const pdfWidth = pdf.internal.pageSize.getWidth()
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width
-      
+
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight)
       pdf.save(`${result.domain}-security-report.pdf`)
     } catch (e) {
@@ -100,248 +149,375 @@ export default function ScanPage() {
     }
   }
 
-  const riskClass = 
-    result?.riskLevel === 'HIGH RISK' || result?.riskLevel === 'MALICIOUS' ? 'red' :
-    result?.riskLevel === 'SUSPICIOUS' ? 'yellow' : 
-    result?.riskLevel === 'LOW RISK' ? 'cyan' :
-    'green';
-
-  const getBadgeClass = (level) => {
-    if (!level) return 'badge-safe';
-    const l = level.toLowerCase();
-    if (l === 'high risk' || l === 'malicious') return 'badge-malicious';
-    if (l === 'suspicious') return 'badge-suspicious';
-    if (l === 'low risk') return 'badge-safe border-cyber-cyan/30 text-cyber-cyan bg-cyber-cyan/5';
-    if (l === 'trusted platform') return 'badge-safe border-cyber-green text-cyber-green bg-cyber-green/10';
-    return 'badge-safe';
-  }
+  const riskBadgeClass = useMemo(() => {
+    const r = result?.riskLevel?.toLowerCase() || ''
+    if (r === 'malicious' || r === 'high risk' || (result?.threatScore > 50)) return 'badge-critical'
+    if (r === 'suspicious' || (result?.threatScore > 20)) return 'badge-suspicious'
+    return 'badge-safe'
+  }, [result])
 
   return (
-    <div className="space-y-6 animate-fade-in relative z-10">
-      <div>
-        <h2 className="text-2xl font-bold tracking-wide text-white">INTELLIGENCE SCANNER</h2>
-        <p className="text-gray-400 font-mono text-xs mt-1">ANALYZE URLS AGAINST THREAT DATABASES AND AI HEURISTICS</p>
+    <div className="space-y-5 animate-fade-in relative z-10 max-w-6xl mx-auto">
+      {/* Page Header */}
+      <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight text-white uppercase font-sans">
+            URL Threat Scanner
+          </h2>
+          <p className="text-slate-400 font-mono text-xs mt-0.5">
+            Real-time multi-engine threat reconnaissance and heuristic analysis
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-[11px] font-mono text-slate-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+            PARALLEL ENGINES ONLINE
+          </span>
+        </div>
       </div>
 
-      {/* Input */}
-      <div className="soc-card p-6 border-t-2 border-t-cyber-cyan">
-        <form onSubmit={handleScan} className="flex gap-4">
-          <input
-            type="text"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="[ ENTER TARGET URL : HTTPS://... ]"
-            className="input-soc font-mono"
-            disabled={scanning}
-          />
-          <button type="submit" className="btn-primary flex items-center gap-3 min-w-[200px] justify-center" disabled={scanning || !url.trim()}>
+      {/* Input Search Box */}
+      <div className="soc-card p-4 bg-slate-900/60 border border-slate-800">
+        <form onSubmit={handleScan} className="flex gap-3">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="Enter URL to inspect (e.g. https://example.com/login)"
+              className="input-soc font-mono text-sm pl-4 pr-10"
+              disabled={scanning}
+            />
+            {url && !scanning && (
+              <button
+                type="button"
+                onClick={() => setUrl('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs font-mono"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <button
+            type="submit"
+            className="btn-primary min-w-[170px]"
+            disabled={scanning || !url.trim()}
+          >
             {scanning ? (
               <>
-                <span className="w-4 h-4 border-2 border-cyber-cyan border-t-transparent rounded-full animate-spin"></span>
-                <span className="font-mono tracking-wider">ANALYZING...</span>
+                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <span>SCANNING...</span>
               </>
             ) : (
               <>
-                <span className="text-xl">⌕</span>
-                <span className="font-mono tracking-wider">INITIATE SCAN</span>
+                <span>⌕</span>
+                <span>ANALYZE URL</span>
               </>
             )}
           </button>
         </form>
       </div>
 
-      {scanning && !result && <ScanProgress isScanning={scanning} />}
+      {/* Scan Progress Monitor */}
+      {scanning && (
+        <ScanProgress
+          isScanning={scanning}
+          domain={currentDomain}
+          statuses={result?.engineStatuses}
+        />
+      )}
 
-      {error && (
-        <div className="bg-cyber-red/10 border border-cyber-red text-cyber-red px-4 py-3 rounded-lg font-mono text-sm">
-          [ SCAN FAILED ] {error}
+      {/* Error Message */}
+      {error && !scanning && (
+        <div className="bg-red-950/40 border border-red-800/80 text-red-300 px-4 py-3 rounded text-xs font-mono flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-red-400 font-bold">[ SCAN ERROR ]</span>
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={() => setError(null)}
+            className="text-slate-400 hover:text-white ml-4"
+          >
+            ✕
+          </button>
         </div>
       )}
 
-      {/* Report View */}
+      {/* Security Report View */}
       {result && (
-        <div ref={reportRef} className="soc-card mt-8 p-8 overflow-hidden relative">
-          {/* Decorative background grid for PDF */}
-          <div className="absolute inset-0 bg-grid opacity-30 pointer-events-none"></div>
+        <div ref={reportRef} className="soc-card p-5 border border-slate-800 bg-slate-950/90 space-y-5">
           
-          <div className="relative z-10 flex justify-between items-start mb-8 border-b border-cyber-border pb-6">
-            <div>
-              <h1 className="text-3xl font-bold text-white tracking-widest uppercase mb-2">SECURITY REPORT</h1>
-              <div className="flex flex-col gap-1 font-mono text-sm">
-                <span className="text-gray-400">TARGET DOMAIN: <span className="text-cyber-cyan">{result.domain}</span></span>
-                <span className="text-gray-500">ANALYSIS DATE: {new Date(result.createdAt).toUTCString()}</span>
-              </div>
-            </div>
-            <button 
-              id="dl-btn"
-              onClick={downloadReport} 
-              className="btn-primary bg-gray-800 hover:bg-gray-700 border-gray-600 shadow-none flex items-center gap-2"
-            >
-              <span className="text-lg">↓</span> <span className="font-mono">DOWNLOAD PDF</span>
-            </button>
-          </div>
+          {/* =========================================================================
+              PRIORITY 1: THREAT VERDICT & OVERVIEW (Displayed FIRST at the top)
+              ========================================================================= */}
+          <div className="p-4 rounded border border-slate-800 bg-slate-900/80 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-6">
+              {/* Threat Gauge */}
+              <ThreatScoreBadge
+                score={result.threatScore || 0}
+                riskLevel={result.riskLevel}
+              />
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10">
-            
-            {/* 1. Website Risk Overview */}
-            <div className={`p-6 bg-gray-900/50 rounded-xl border border-cyber-${riskClass}/30 relative overflow-hidden`}>
-              <div className={`absolute top-0 left-0 w-1 h-full bg-cyber-${riskClass}`}></div>
-              <h3 className="text-gray-400 font-mono text-xs uppercase tracking-widest mb-6">1. RISK OVERVIEW</h3>
-              
-              <div className="flex items-center justify-between">
-                <ThreatGauge score={result.threatScore} />
-                <div className="space-y-4 flex-1 ml-8">
-                  <div>
-                    <span className="block text-gray-500 font-mono text-[10px] uppercase mb-1">Risk Classification</span>
-                    <span className={`badge ${getBadgeClass(result.riskLevel)}`}>
-                      {result.riskLevel}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="block text-gray-500 font-mono text-[10px] uppercase mb-1">Phishing Probability</span>
-                    <span className="text-white font-mono text-lg">{result.phishingProbability?.toUpperCase()}</span>
-                  </div>
+              <div className="h-10 w-px bg-slate-800 hidden sm:block"></div>
+
+              {/* Classification & Probability */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-slate-500 uppercase">Verdict:</span>
+                  <span className={`badge ${riskBadgeClass}`}>
+                    {result.riskLevel}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-slate-500 uppercase">Phishing Risk:</span>
+                  <span className="text-xs font-mono font-semibold text-slate-200 uppercase">
+                    {result.phishingProbability || 'UNKNOWN'}
+                  </span>
                 </div>
               </div>
             </div>
 
-            {/* 2. Detected Security Issues */}
-            <div className="p-6 bg-gray-900/50 rounded-xl border border-cyber-border">
-              <h3 className="text-gray-400 font-mono text-xs uppercase tracking-widest mb-6">2. THREAT SIGNATURES</h3>
+            {/* Target Metadata & Actions */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <div className="text-left sm:text-right font-mono text-xs">
+                <div className="text-slate-300 font-semibold truncate max-w-[280px]" title={result.domain}>
+                  {result.domain}
+                </div>
+                <div className="text-slate-500 text-[10px]">
+                  {result.createdAt ? new Date(result.createdAt).toUTCString() : new Date().toUTCString()}
+                </div>
+              </div>
+
+              <button
+                id="dl-btn"
+                onClick={downloadReport}
+                className="btn-primary bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 py-1.5 px-3 text-xs"
+              >
+                <span>↓</span>
+                <span>EXPORT PDF</span>
+              </button>
+            </div>
+          </div>
+
+          {/* =========================================================================
+              EVIDENCE & INTELLIGENCE PANELS (Compact 2-Column SOC Grid)
+              ========================================================================= */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+            {/* Panel 1: Threat Signatures & Heuristics */}
+            <div className="soc-card p-4 border-slate-800/80 bg-slate-900/40">
+              <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+                <h4 className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
+                  Threat Signatures & Anomalies
+                </h4>
+                <span className="text-[10px] font-mono text-slate-500">
+                  {result.issues?.length || 0} DETECTIONS
+                </span>
+              </div>
+
               {result.issues && result.issues.length > 0 ? (
-                <ul className="space-y-3">
-                  {result.issues.map((issue, i) => (
-                    <li key={i} className="flex items-start gap-3">
-                      <span className="text-cyber-red mt-1 text-xs">►</span>
-                      <span className="text-gray-300 font-mono text-sm">{issue}</span>
+                <ul className="space-y-2">
+                  {result.issues.map((issue, idx) => (
+                    <li key={idx} className="flex items-start gap-2 text-xs font-mono">
+                      <span className="text-red-400 mt-0.5">✕</span>
+                      <span className="text-slate-300">{issue}</span>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <div className="flex items-center gap-3 text-cyber-green font-mono text-sm h-full">
-                  <span className="text-xl">✓</span>
-                  <span>NO THREAT SIGNATURES MATCHED</span>
+                <div className="flex items-center gap-2 py-3 text-xs font-mono text-emerald-400">
+                  <span>✓</span>
+                  <span>No malicious threat signatures matched</span>
                 </div>
               )}
             </div>
 
-            {/* 3. Phishing Indicators */}
-            <div className="p-6 bg-gray-900/50 rounded-xl border border-cyber-border">
-              <h3 className="text-gray-400 font-mono text-xs uppercase tracking-widest mb-6">3. ENGINE INTEL</h3>
-              <div className="space-y-4 font-mono text-sm">
-                <div className="flex justify-between items-center pb-2 border-b border-gray-800">
-                  <span className="text-gray-500">Google Safe Browsing</span>
-                  <span className={result.googleSafeBrowsing?.isSafe ? 'text-cyber-green' : 'text-cyber-red'}>
-                    {result.googleSafeBrowsing?.isSafe ? '[ CLEAN ]' : '[ FLAGGED ]'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center pb-2 border-b border-gray-800">
-                  <span className="text-gray-500">VirusTotal Malicious</span>
-                  <span className={result.virusTotal?.malicious > 0 ? 'text-cyber-red' : 'text-cyber-green'}>
-                    {result.virusTotal?.malicious} ENGINES
-                  </span>
-                </div>
-                <div className="flex justify-between items-center pb-2 border-b border-gray-800">
-                  <span className="text-gray-500">VirusTotal Suspicious</span>
-                  <span className={result.virusTotal?.suspicious > 0 ? 'text-cyber-yellow' : 'text-cyber-green'}>
-                    {result.virusTotal?.suspicious} ENGINES
-                  </span>
-                </div>
+            {/* Panel 2: Intelligence Engines (Google Safe Browsing, VirusTotal, Piracy) */}
+            <div className="soc-card p-4 border-slate-800/80 bg-slate-900/40">
+              <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+                <h4 className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
+                  Reputation Engines & Blacklists
+                </h4>
+                <span className="text-[10px] font-mono text-slate-500">MULTI-SOURCE</span>
               </div>
-            </div>
 
-            {/* 4. Domain Intelligence Summary */}
-            <div className="p-6 bg-gray-900/50 rounded-xl border border-cyber-border">
-              <h3 className="text-gray-400 font-mono text-xs uppercase tracking-widest mb-6">4. DOMAIN RECONNAISSANCE</h3>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-4 font-mono text-xs">
-                <div>
-                  <span className="block text-gray-500 text-[10px] uppercase mb-1">Registrar</span>
-                  <span className="text-gray-300 truncate block">{result.domainInfo?.registrar || 'UNKNOWN'}</span>
+              <div className="space-y-2.5 font-mono text-xs">
+                {/* VirusTotal */}
+                <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
+                  <span className="text-slate-400">VirusTotal Detection</span>
+                  <div>
+                    {result.virusTotal?.status === 'TIMEOUT' ? (
+                      <span className="text-amber-400 text-[11px]">[ TIMEOUT ]</span>
+                    ) : result.virusTotal?.status === 'UNAVAILABLE' ? (
+                      <span className="text-slate-500 text-[11px]">[ UNAVAILABLE ]</span>
+                    ) : (
+                      <span className={result.virusTotal?.malicious > 0 ? 'text-red-400 font-bold' : 'text-emerald-400'}>
+                        {result.virusTotal?.malicious > 0
+                          ? `${result.virusTotal.malicious} / ${result.virusTotal.totalEngines || 0} ENGINES FLAGGED`
+                          : `CLEAN (0 / ${result.virusTotal?.totalEngines || 0} ENGINES)`}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <span className="block text-gray-500 text-[10px] uppercase mb-1">Domain Age</span>
-                  <span className="text-gray-300">{result.domainInfo?.age != null ? `${result.domainInfo.age} DAYS` : 'UNKNOWN'}</span>
-                </div>
-                <div>
-                  <span className="block text-gray-500 text-[10px] uppercase mb-1">Country</span>
-                  <span className="text-gray-300">{result.domainInfo?.country || 'UNKNOWN'}</span>
-                </div>
-                <div>
-                  <span className="block text-gray-500 text-[10px] uppercase mb-1">SSL Certificate</span>
-                  <span className={result.sslStatus?.valid ? 'text-cyber-green' : 'text-cyber-red'}>
-                    {result.sslStatus?.status || 'UNKNOWN'}
-                  </span>
-                </div>
-              </div>
-            </div>
 
-            {/* 5. IP Intelligence */}
-            {result.ipIntel && (
-              <div className="p-6 bg-gray-900/50 rounded-xl border border-cyber-border relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-24 h-24 bg-cyber-cyan/5 rounded-full blur-2xl group-hover:bg-cyber-cyan/10 transition-all"></div>
-                <h3 className="text-gray-400 font-mono text-xs uppercase tracking-widest mb-6">5. IP INTELLIGENCE</h3>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-4 font-mono text-[11px]">
+                {/* Google Safe Browsing */}
+                <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
+                  <span className="text-slate-400">Google Safe Browsing</span>
                   <div>
-                    <span className="block text-gray-500 text-[9px] uppercase mb-1">IP Address</span>
-                    <span className="text-cyber-cyan font-bold">{result.ipIntel.ip}</span>
-                  </div>
-                  <div>
-                    <span className="block text-gray-500 text-[9px] uppercase mb-1">Location</span>
-                    <div className="flex items-center gap-2 text-gray-300">
-                      {result.ipIntel.country && (
-                        <img 
-                          src={`https://flagcdn.com/w20/${result.ipIntel.country.toLowerCase()}.png`} 
-                          alt={result.ipIntel.country}
-                          className="w-4 h-3 opacity-80"
-                        />
-                      )}
-                      <span>{result.ipIntel.city}, {result.ipIntel.region}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <span className="block text-gray-500 text-[9px] uppercase mb-1">ISP / Organization</span>
-                    <span className="text-gray-400 truncate block" title={result.ipIntel.org}>{result.ipIntel.org}</span>
-                  </div>
-                  <div>
-                    <span className="block text-gray-500 text-[9px] uppercase mb-1">Network (ASN)</span>
-                    <span className="text-white bg-gray-800 px-2 py-0.5 rounded border border-gray-700">
-                      {result.ipIntel.asn}
-                    </span>
+                    {result.googleSafeBrowsing?.status === 'TIMEOUT' ? (
+                      <span className="text-amber-400 text-[11px]">[ TIMEOUT ]</span>
+                    ) : result.googleSafeBrowsing?.status === 'UNAVAILABLE' ? (
+                      <span className="text-slate-500 text-[11px]">[ NOT CONFIGURED ]</span>
+                    ) : result.googleSafeBrowsing?.isSafe ? (
+                      <span className="text-emerald-400">[ CLEAN / UNLISTED ]</span>
+                    ) : (
+                      <span className="text-red-400 font-bold">
+                        [ FLAGGED: {result.googleSafeBrowsing?.threats?.join(', ') || 'MALWARE'} ]
+                      </span>
+                    )}
                   </div>
                 </div>
-              </div>
-            )}
 
-            {/* 6. Piracy Indicator */}
-            <div className="p-6 bg-gray-900/50 rounded-xl border border-cyber-border relative overflow-hidden group">
-              <div className={`absolute top-0 right-0 w-24 h-24 rounded-full blur-2xl transition-all ${
-                result.piracyStatus === 'High Piracy Risk' ? 'bg-cyber-red/10' : 
-                result.piracyStatus === 'Possible Piracy' ? 'bg-cyber-yellow/10' : 'bg-cyber-green/5'
-              }`}></div>
-              <h3 className="text-gray-400 font-mono text-xs uppercase tracking-widest mb-6">6. PIRACY INDICATOR</h3>
-              <div className="flex items-center gap-4 py-2">
-                <div className={`w-3 h-3 rounded-full animate-pulse ${
-                  result.piracyStatus === 'High Piracy Risk' ? 'bg-cyber-red shadow-[0_0_10px_rgba(239,68,68,0.5)]' :
-                  result.piracyStatus === 'Possible Piracy' ? 'bg-cyber-yellow shadow-[0_0_10px_rgba(245,158,11,0.5)]' : 
-                  'bg-cyber-green shadow-[0_0_10px_rgba(34,197,94,0.5)]'
-                }`}></div>
-                <div className="font-mono text-sm">
-                  <span className="text-gray-500 mr-2 lowercase">status:</span>
-                  <span className={`uppercase font-bold ${
-                    result.piracyStatus === 'High Piracy Risk' ? 'text-cyber-red' :
-                    result.piracyStatus === 'Possible Piracy' ? 'text-cyber-yellow' : 
-                    'text-cyber-green'
-                  }`}>
+                {/* Piracy Indicator */}
+                <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
+                  <span className="text-slate-400">Piracy / Copyright Vector</span>
+                  <span className={
+                    result.piracyStatus === 'High Piracy Risk' ? 'text-red-400 font-bold' :
+                    result.piracyStatus === 'Possible Piracy' ? 'text-amber-400' : 'text-emerald-400'
+                  }>
                     {result.piracyStatus || 'No Piracy Signals'}
                   </span>
                 </div>
+
+                {/* SSL/TLS Security */}
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-slate-400">SSL / TLS Protocol</span>
+                  <span className={result.sslStatus?.valid ? 'text-emerald-400' : 'text-red-400'}>
+                    {result.sslStatus?.status || (result.sslStatus?.valid ? 'VALID' : 'INSECURE')}
+                    {result.sslStatus?.daysRemaining > 0 && ` (${result.sslStatus.daysRemaining} days left)`}
+                  </span>
+                </div>
               </div>
-              <p className="mt-4 text-[10px] text-gray-500 font-mono uppercase tracking-tighter opacity-50">
-                AI Pattern Matching: KEYWORD_CHECK_V2
-              </p>
+            </div>
+
+            {/* Panel 3: Domain Reconnaissance */}
+            <div className="soc-card p-4 border-slate-800/80 bg-slate-900/40">
+              <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+                <h4 className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
+                  Domain Reconnaissance
+                </h4>
+                <span className="text-[10px] font-mono text-slate-500">WHOIS / DNS</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 font-mono text-xs">
+                <div>
+                  <span className="block text-[10px] text-slate-500 uppercase">Registrar</span>
+                  <span className="text-slate-200 truncate block" title={result.domainInfo?.registrar}>
+                    {result.domainInfo?.registrar || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[10px] text-slate-500 uppercase">Domain Age</span>
+                  <span className="text-slate-200">
+                    {result.domainInfo?.age != null
+                      ? `${result.domainInfo.age} days (~${(result.domainInfo.age / 365).toFixed(1)} yrs)`
+                      : 'UNKNOWN'}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[10px] text-slate-500 uppercase">Registrant Country</span>
+                  <span className="text-slate-200">
+                    {result.domainInfo?.country || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[10px] text-slate-500 uppercase">Registered Date</span>
+                  <span className="text-slate-200 truncate block">
+                    {result.domainInfo?.creationDate
+                      ? new Date(result.domainInfo.creationDate).toISOString().split('T')[0]
+                      : 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="col-span-2">
+                  <span className="block text-[10px] text-slate-500 uppercase">Nameservers</span>
+                  <span className="text-slate-300 text-[11px] truncate block">
+                    {result.domainInfo?.nameservers?.length > 0
+                      ? result.domainInfo.nameservers.join(', ')
+                      : 'None detected'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Panel 4: Network & Geolocation (IP Intelligence) */}
+            <div className="soc-card p-4 border-slate-800/80 bg-slate-900/40">
+              <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+                <h4 className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
+                  Network & Geolocation
+                </h4>
+                <span className="text-[10px] font-mono text-slate-500">IP INTEL</span>
+              </div>
+
+              {result.ipIntel ? (
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 font-mono text-xs">
+                  <div>
+                    <span className="block text-[10px] text-slate-500 uppercase">IP Address</span>
+                    <span className="text-sky-400 font-bold">{result.ipIntel.ip}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-slate-500 uppercase">Location</span>
+                    <div className="flex items-center gap-1.5 text-slate-200">
+                      {result.ipIntel.country && (
+                        <img
+                          src={`https://flagcdn.com/w20/${result.ipIntel.country.toLowerCase()}.png`}
+                          alt={result.ipIntel.country}
+                          className="w-3.5 h-2.5 opacity-90 inline-block"
+                          onError={(e) => e.target.style.display = 'none'}
+                        />
+                      )}
+                      <span className="truncate">
+                        {[result.ipIntel.city, result.ipIntel.country].filter(Boolean).join(', ') || 'Unknown'}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-slate-500 uppercase">Autonomous System (ASN)</span>
+                    <span className="text-slate-200 bg-slate-800 px-1.5 py-0.5 rounded text-[11px] border border-slate-700">
+                      {result.ipIntel.asn || 'Unknown'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-slate-500 uppercase">ISP / Organization</span>
+                    <span className="text-slate-300 truncate block" title={result.ipIntel.org}>
+                      {result.ipIntel.org || result.domainInfo?.hostingProvider || 'Unknown'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs font-mono text-slate-500 py-3">
+                  IP Intelligence data unavailable for this host.
+                </div>
+              )}
             </div>
 
           </div>
+
+          {/* Engine Status Audit Footnote */}
+          {result.engineStatuses && (
+            <div className="pt-3 border-t border-slate-800/60 flex flex-wrap items-center justify-between text-[11px] font-mono text-slate-500">
+              <div className="flex items-center gap-4">
+                <span>Engines Queried: 8</span>
+                <span>•</span>
+                <span>Mode: Parallel Concurrent</span>
+                <span>•</span>
+                <span>Cache: {result.isCached ? 'ACTIVE HIT' : 'POPULATED'}</span>
+              </div>
+              <div className="text-slate-500">
+                PhishGuard Enterprise AI Threat Protection
+              </div>
+            </div>
+          )}
+
         </div>
       )}
     </div>

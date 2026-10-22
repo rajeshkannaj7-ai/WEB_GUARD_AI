@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const Scan = require('../models/Scan');
 const ThreatEngine = require('../services/ThreatEngine');
 const { extractDomain, normalizeUrl } = require('../services/phishingAnalyzer');
+const { saveInMemoryScan, getInMemoryHistory } = require('../services/inMemoryStore');
 
 /**
  * POST /api/scan
@@ -45,16 +47,29 @@ router.post('/', async (req, res, next) => {
       sslStatus: analysis.sslStatus,
       domainInfo: analysis.domainInfo,
       virusTotal: analysis.virusTotal,
-      googleSafeBrowsing: analysis.googleSafeBrowsing
+      googleSafeBrowsing: analysis.googleSafeBrowsing,
+      ipIntel: analysis.ipIntel,
+      engineStatuses: analysis.engineStatuses
     };
 
-    // Save to MongoDB
-    const scan = new Scan(result);
-    await scan.save();
+    // Save scan result (MongoDB if available, otherwise in-memory)
+    let savedScan;
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const scan = new Scan(result);
+        await scan.save();
+        savedScan = { ...result, _id: scan._id, createdAt: scan.createdAt };
+      } catch (dbErr) {
+        console.warn('⚠️ MongoDB save failed, saving to in-memory store:', dbErr.message);
+        savedScan = saveInMemoryScan(result);
+      }
+    } else {
+      savedScan = saveInMemoryScan(result);
+    }
 
     console.log(`✅ Deep Scan Complete: ${domain} | Score: ${analysis.threatScore} | Risk: ${analysis.riskLevel}`);
 
-    res.json({ success: true, data: { ...result, _id: scan._id, createdAt: scan.createdAt } });
+    res.json({ success: true, data: savedScan });
   } catch (err) {
     console.error(`❌ Scan failed for ${req.body.url}:`, err.message);
     next(err);
@@ -71,10 +86,24 @@ router.get('/history', async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
-    const [scans, total] = await Promise.all([
-      Scan.find().sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-      Scan.countDocuments()
-    ]);
+    let scans, total;
+    if (mongoose.connection.readyState === 1) {
+      try {
+        [scans, total] = await Promise.all([
+          Scan.find().sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+          Scan.countDocuments()
+        ]);
+      } catch (dbErr) {
+        console.warn('⚠️ MongoDB history query failed, using in-memory store:', dbErr.message);
+        const memData = getInMemoryHistory(skip, limit);
+        scans = memData.scans;
+        total = memData.total;
+      }
+    } else {
+      const memData = getInMemoryHistory(skip, limit);
+      scans = memData.scans;
+      total = memData.total;
+    }
 
     res.json({
       success: true,

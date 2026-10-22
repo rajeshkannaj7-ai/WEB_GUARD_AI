@@ -6,7 +6,7 @@ class SSLInspector {
     const cleanDomain = domain.split(':')[0];
     
     try {
-      const ssl = await sslChecker(cleanDomain, { method: 'GET', port: 443, timeout: 10000 });
+      const ssl = await sslChecker(cleanDomain, { method: 'GET', port: 443, timeout: 2500 });
       
       let status = 'UNKNOWN';
       let frontendStatus = '[ INSECURE ]';
@@ -16,7 +16,6 @@ class SSLInspector {
           status = 'EXPIRED';
         } else {
           status = 'VALID';
-          frontendStatus = '[ SECURE ]';
         }
       } else {
         status = 'INVALID';
@@ -26,17 +25,19 @@ class SSLInspector {
       const selfSigned = await this.isSelfSigned(cleanDomain);
       if (selfSigned) {
           status = 'SELF-SIGNED';
-          frontendStatus = '[ INSECURE ]';
       }
 
+      const isValid = ssl.valid && status === 'VALID' && !selfSigned;
+      frontendStatus = isValid ? '[ SECURE ]' : '[ INSECURE ]';
+
       return {
-        valid: ssl.valid && status === 'VALID',
+        valid: isValid,
         status,
         frontendStatus,
         daysRemaining: ssl.daysRemaining || 0,
         validFrom: ssl.validFrom,
         validTo: ssl.validTo,
-        score: (ssl.valid && status === 'VALID') ? 0 : 15
+        score: isValid ? 0 : 15
       };
     } catch (err) {
       return {
@@ -54,7 +55,6 @@ class SSLInspector {
           const socket = tls.connect(443, domain, { servername: domain, rejectUnauthorized: false }, () => {
               const cert = socket.getPeerCertificate();
               if (cert && cert.issuer && cert.subject) {
-                  // If issuer and subject are the same, it's likely self-signed
                   const isSelf = JSON.stringify(cert.issuer) === JSON.stringify(cert.subject);
                   socket.end();
                   resolve(isSelf);
@@ -67,7 +67,7 @@ class SSLInspector {
           setTimeout(() => {
               socket.destroy();
               resolve(false);
-          }, 5000);
+          }, 2000);
       });
   }
 }

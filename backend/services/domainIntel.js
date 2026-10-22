@@ -1,46 +1,42 @@
 const dns = require('dns').promises;
 const whois = require('whois-json');
 const axios = require('axios');
-
 const { checkSSL } = require('./sslChecker');
+const { cache, TTL } = require('./cache');
 
 /**
  * Check if a domain is active via DNS, HTTP, or SSL
- * A domain is ACTIVE if:
- * - DNS resolution succeeds
- * - OR HTTP response exists (status 200–499)
- * - OR SSL certificate is detected
  */
 async function checkDomainAvailability(domain) {
   const cleanDomain = domain.split(':')[0].replace(/^www\./, '');
   
-  // 1. Check DNS resolution first (most efficient)
+  // 1. Check DNS resolution first with 2000ms timeout
   try {
-    // dns.lookup follows OS resolver - more reliable than resolve4 for general availability
-    await dns.lookup(cleanDomain);
+    await Promise.race([
+      dns.lookup(cleanDomain),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+    ]);
     return true;
   } catch (dnsErr) {
     // DNS failed, continue to other checks
   }
 
-  // 2. Check HTTP status (200-499)
+  // 2. Check HTTP status (200-499) with 2000ms timeout
   try {
-    // Use GET with 1 byte limit for better compatibility than HEAD (some sites block HEAD)
-    const response = await axios.get(`http://${cleanDomain}`, { 
-      timeout: 5000,
+    await axios.get(`http://${cleanDomain}`, { 
+      timeout: 2000,
       validateStatus: (status) => status >= 200 && status < 500,
-      maxContentLength: 1, // Only need status code
-      maxRedirects: 5
+      maxContentLength: 1,
+      maxRedirects: 3
     });
     return true;
   } catch (httpErr) {
-    // If HTTP fails, try HTTPS specifically
     try {
       await axios.get(`https://${cleanDomain}`, {
-        timeout: 5000,
+        timeout: 2000,
         validateStatus: (status) => status >= 200 && status < 500,
         maxContentLength: 1,
-        maxRedirects: 5
+        maxRedirects: 3
       });
       return true;
     } catch (httpsErr) {
@@ -51,7 +47,6 @@ async function checkDomainAvailability(domain) {
   // 3. Check SSL Certificate (Port 443)
   try {
     const ssl = await checkSSL(cleanDomain);
-    // If status is not 'NO SSL', then something responded on port 443
     if (ssl && ssl.status !== 'NO SSL' && ssl.status !== 'UNKNOWN') {
       return true;
     }
@@ -62,72 +57,73 @@ async function checkDomainAvailability(domain) {
   return false;
 }
 
+async function fetchWhoisXml(domain) {
+  const apiKey = process.env.WHOIS_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const response = await axios.get('https://www.whoisxmlapi.com/whoisserver/WhoisService', {
+      params: {
+        apiKey,
+        domainName: domain,
+        outputFormat: 'JSON'
+      },
+      timeout: 3000
+    });
+    return response.data?.WhoisRecord || null;
+  } catch (err) {
+    return null;
+  }
+}
+
 /**
  * Get WHOIS and DNS information for a domain
- * @param {string} domain - Domain to check
- * @returns {object} - Domain intelligence result
  */
 async function getDomainIntel(domain) {
   const cleanDomain = domain.split(':')[0].replace(/^www\./, '');
-  
-  const isActive = await checkDomainAvailability(cleanDomain);
-  
-  let whoisData = {};
-  let dnsData = {};
-  
-  // WHOIS lookup
-  try {
-    const raw = await whois(cleanDomain, { timeout: 10000 });
-    whoisData = raw;
-  } catch (err) {
-    console.warn(`⚠️ WHOIS failed for ${cleanDomain}:`, err.message);
+  const cacheKey = `intel:${cleanDomain}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
+  const [isActive, addresses, nameservers, xmlRecord] = await Promise.all([
+    checkDomainAvailability(cleanDomain).catch(() => false),
+    dns.resolve4(cleanDomain).catch(() => []),
+    dns.resolveNs(cleanDomain).catch(() => []),
+    fetchWhoisXml(cleanDomain).catch(() => null)
+  ]);
+
+  let registrar = null;
+  let country = null;
+  let creationDateRaw = null;
+  let expirationDateRaw = null;
+  let nsArray = nameservers || [];
+
+  if (xmlRecord && xmlRecord.dataError !== 'MISSING_WHOIS_DATA' && (xmlRecord.registrarName || xmlRecord.registryData || xmlRecord.createdDate)) {
+    registrar = xmlRecord.registrarName || xmlRecord.registryData?.registrarName || null;
+    country = xmlRecord.registrant?.country || xmlRecord.registrant?.countryCode || 
+              xmlRecord.registryData?.registrant?.country || xmlRecord.registryData?.registrant?.countryCode || null;
+    creationDateRaw = xmlRecord.createdDate || xmlRecord.registryData?.createdDate || null;
+    expirationDateRaw = xmlRecord.expiresDate || xmlRecord.registryData?.expiresDate || null;
+    if (xmlRecord.nameServers?.hostNames?.length > 0) {
+      nsArray = xmlRecord.nameServers.hostNames;
+    }
+  } else {
+    try {
+      const whoisData = await whois(cleanDomain, { timeout: 3000 });
+      registrar = extractWhoisField(whoisData, ['registrar', 'Registrar', 'REGISTRAR', 'Registrar Name']);
+      country = extractWhoisField(whoisData, ['registrantCountry', 'country', 'Country', 'Registrant Country']);
+      creationDateRaw = extractWhoisField(whoisData, ['creationDate', 'created', 'Created Date', 'Creation Date', 'registered']);
+      expirationDateRaw = extractWhoisField(whoisData, ['registrarRegistrationExpirationDate', 'expiresDate', 'Expiry Date', 'Expiration Date']);
+      if (!nsArray.length && (whoisData.nameServer || whoisData.nameServers)) {
+        const ns = whoisData.nameServer || whoisData.nameServers;
+        nsArray = Array.isArray(ns) ? ns : typeof ns === 'string' ? ns.split('\n').filter(Boolean) : [];
+      }
+    } catch (err) {
+      // Ignore fallback failure
+    }
   }
 
-  // DNS lookup
-  try {
-    const [addresses, nameservers] = await Promise.allSettled([
-      dns.resolve4(cleanDomain),
-      dns.resolveNs(cleanDomain)
-    ]);
-    
-    dnsData.ipAddresses = addresses.status === 'fulfilled' ? addresses.value : [];
-    dnsData.nameservers = nameservers.status === 'fulfilled' ? nameservers.value : [];
-  } catch (err) {
-    console.warn(`⚠️ DNS lookup failed for ${cleanDomain}:`, err.message);
-  }
-
-  // Parse WHOIS data
-  const registrar = extractWhoisField(whoisData, [
-    'registrar', 'Registrar', 'REGISTRAR', 'Registrar Name'
-  ]);
-
-  const country = extractWhoisField(whoisData, [
-    'registrantCountry', 'country', 'Country', 'Registrant Country'
-  ]);
-
-  const creationDateRaw = extractWhoisField(whoisData, [
-    'creationDate', 'created', 'Created Date', 'Creation Date',
-    'Domain Registration Date', 'registered'
-  ]);
-
-  const expirationDateRaw = extractWhoisField(whoisData, [
-    'registrarRegistrationExpirationDate', 'expiresDate', 'Expiry Date',
-    'Expiration Date', 'Registry Expiry Date', 'Registrar Registration Expiration Date'
-  ]);
-
-  const nameservers = whoisData.nameServer || whoisData.nameServers || 
-    dnsData.nameservers || [];
-
-  const nsArray = Array.isArray(nameservers) 
-    ? nameservers 
-    : typeof nameservers === 'string' 
-      ? nameservers.split('\n').filter(Boolean)
-      : [];
-
-  // Calculate domain age
   let domainAge = null;
   let creationDate = null;
-  
   if (creationDateRaw) {
     try {
       const parsed = new Date(creationDateRaw);
@@ -136,9 +132,7 @@ async function getDomainIntel(domain) {
         const ageMs = Date.now() - parsed.getTime();
         domainAge = Math.floor(ageMs / (1000 * 60 * 60 * 24));
       }
-    } catch (e) {
-      // ignore parse errors
-    }
+    } catch (e) {}
   }
 
   let expirationDate = null;
@@ -148,18 +142,15 @@ async function getDomainIntel(domain) {
       if (!isNaN(parsed.getTime())) {
         expirationDate = parsed.toISOString();
       }
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) {}
   }
 
-  // Determine hosting provider from IPs
   let hostingProvider = null;
-  if (dnsData.ipAddresses && dnsData.ipAddresses.length > 0) {
-    hostingProvider = await getHostingProvider(dnsData.ipAddresses[0]);
+  if (addresses && addresses.length > 0) {
+    hostingProvider = await getHostingProvider(addresses[0]);
   }
 
-  return {
+  const result = {
     isActive,
     age: domainAge,
     registrar: registrar || 'Unknown',
@@ -168,8 +159,11 @@ async function getDomainIntel(domain) {
     expirationDate,
     nameservers: nsArray.slice(0, 4),
     hostingProvider: hostingProvider || 'Unknown',
-    ipAddresses: dnsData.ipAddresses || []
+    ipAddresses: addresses || []
   };
+
+  cache.set(cacheKey, result, TTL.DNS);
+  return result;
 }
 
 function extractWhoisField(data, keys) {
@@ -184,17 +178,23 @@ function extractWhoisField(data, keys) {
 }
 
 /**
- * Get IP intelligence for a domain with fallbacks
+ * Get IP intelligence for a domain with fallbacks, 2000ms timeouts, and 15m caching
  * @param {string} domain 
- * @returns {object}
+ * @returns {Promise<object>}
  */
 async function getIPIntelligence(domain) {
+  const cleanDomain = domain.trim().replace(/^https?:\/\//, '').split('/')[0];
+  const cacheKey = `ip:intel:${cleanDomain}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return { ...cached, isCached: true };
+
   try {
-    const cleanDomain = domain.trim().replace(/^https?:\/\//, '').split('/')[0];
-    
     let ip = null;
     try {
-      const lookup = await dns.lookup(cleanDomain);
+      const lookup = await Promise.race([
+        dns.lookup(cleanDomain),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+      ]);
       ip = lookup.address;
     } catch (dnsErr) {
       const addresses = await dns.resolve4(cleanDomain).catch(() => []);
@@ -204,28 +204,40 @@ async function getIPIntelligence(domain) {
     }
     
     if (!ip) {
-      throw new Error('Could not resolve domain to IP Address');
+      return {
+        status: 'UNAVAILABLE',
+        ip: 'Unknown',
+        country: 'Unknown',
+        region: 'Unknown',
+        city: 'Unknown',
+        org: 'Unknown',
+        asn: 'Unknown',
+        error: 'Could not resolve domain to IP Address'
+      };
     }
     
-    // Attempt multiple APIs for reliability
+    // Attempt multiple APIs with 2000ms timeout
     const apis = [
-      { url: `https://ipinfo.io/${ip}/json?token=${process.env.IPINFO_API_KEY}`, parse: d => ({ ip: d.ip, country: d.country, region: d.region, city: d.city, org: d.org, asn: d.asn || (d.org?.startsWith('AS') ? d.org.split(' ')[0] : 'Unknown') }) },
-      { url: `https://ipapi.co/${ip}/json/`, parse: d => ({ ip: d.ip, country: d.country_code, region: d.region, city: d.city, org: d.org, asn: d.asn }) },
-      { url: `https://ipwhois.app/json/${ip}`, parse: d => ({ ip: d.ip, country: d.country_code, region: d.region, city: d.city, org: d.org || d.isp, asn: d.asn }) }
+      { url: `https://ipinfo.io/${ip}/json?token=${process.env.IPINFO_API_KEY}`, parse: d => ({ status: 'COMPLETE', ip: d.ip, country: d.country, region: d.region, city: d.city, org: d.org, asn: d.asn || (d.org?.startsWith('AS') ? d.org.split(' ')[0] : 'Unknown') }) },
+      { url: `https://ipapi.co/${ip}/json/`, parse: d => ({ status: 'COMPLETE', ip: d.ip, country: d.country_code, region: d.region, city: d.city, org: d.org, asn: d.asn }) },
+      { url: `https://ipwhois.app/json/${ip}`, parse: d => ({ status: 'COMPLETE', ip: d.ip, country: d.country_code, region: d.region, city: d.city, org: d.org || d.isp, asn: d.asn }) }
     ];
 
     for (const api of apis) {
       try {
-        const res = await axios.get(api.url, { timeout: 4000 });
+        const res = await axios.get(api.url, { timeout: 2000 });
         if (res.data && (res.data.ip || res.data.success !== false)) {
-          return api.parse(res.data);
+          const parsed = api.parse(res.data);
+          cache.set(cacheKey, parsed, TTL.IP);
+          return parsed;
         }
       } catch (e) {
         continue;
       }
     }
 
-    return {
+    const fallback = {
+      status: 'COMPLETE',
       ip,
       country: 'Unknown',
       region: 'Unknown',
@@ -233,16 +245,34 @@ async function getIPIntelligence(domain) {
       org: 'Unknown',
       asn: 'Unknown'
     };
+    cache.set(cacheKey, fallback, TTL.IP);
+    return fallback;
+
   } catch (err) {
-    throw new Error(`IP Intelligence lookup failed: ${err.message}`);
+    return {
+      status: 'UNAVAILABLE',
+      ip: 'Unknown',
+      country: 'Unknown',
+      region: 'Unknown',
+      city: 'Unknown',
+      org: 'Unknown',
+      asn: 'Unknown',
+      error: err.message
+    };
   }
 }
 
-
 async function getHostingProvider(ip) {
+  if (!ip) return null;
+  const cacheKey = `ip:org:${ip}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
   try {
-    const response = await axios.get(`https://ipinfo.io/${ip}/json`, { timeout: 5000 });
-    return response.data.org || response.data.company?.name || null;
+    const response = await axios.get(`https://ipinfo.io/${ip}/json?token=${process.env.IPINFO_API_KEY}`, { timeout: 2000 });
+    const org = response.data.org || response.data.company?.name || null;
+    if (org) cache.set(cacheKey, org, TTL.IP);
+    return org;
   } catch (e) {
     return null;
   }

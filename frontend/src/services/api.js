@@ -18,12 +18,15 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   response => response.data,
   error => {
+    if (axios.isCancel(error)) {
+      return Promise.reject(error)
+    }
     const message = error.response?.data?.error || error.message || 'An error occurred'
     return Promise.reject(new Error(message))
   }
 )
 
-export const scanUrl = (url) => api.post('/scan', { url })
+export const scanUrl = (url, config = {}) => api.post('/scan', { url }, config)
 export const getDomainInfo = (domain) => api.get(`/domain?domain=${encodeURIComponent(domain)}`)
 export const getIPIntelligence = (domain) => api.get(`/ip-intelligence?domain=${encodeURIComponent(domain)}`)
 export const getDashboard = () => api.get('/dashboard')
